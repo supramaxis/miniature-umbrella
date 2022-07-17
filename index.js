@@ -3,37 +3,69 @@ const express = require('express');
 const morgan = require('morgan');
 const helmet = require('helmet');
 const yup = require('yup');
+const mongoose = require('mongoose');
 const monk = require('monk');
 const rateLimit = require('express-rate-limit');
 const slowDown = require('express-slow-down');
 const { nanoid } = require('nanoid');
+const app = express();
+const ShortUrl = require("./src/models/shortUrl");
+
+
+
 
 require('dotenv').config();
+app.use(morgan('dev'));
+app.use(express.json());
+app.set("views", path.join(__dirname, "/src/views"));
+app.use(express.static(path.join(__dirname,"/src/public")));
+app.set('view engine', 'ejs');
+app.use(express.urlencoded({ extended: false}));
+app.use(helmet());
 
-const db = monk(process.env.MONGODB_URI);
+
+
+console.log(__dirname + "/src/views");
+
+
+const db = monk(process.env.MONGODB_URI || 'mongodb://localhost/cdg');
+db.catch(function(err) {
+  console.log(err)
+});
+db.then(() => {
+  console.log('Connected correctly to server')
+})
 const urls = db.get('urls');
 urls.createIndex({ slug: 1 }, { unique: true });
 
-const app = express();
 app.enable('trust proxy');
 
-app.use(helmet());
-app.use(morgan('common'));
-app.use(express.json());
-app.use(express.static('./public'));
+app.get('/', async (req, res) => {
+    const shortUrls = await urls.find({})
+    res.render('index', {slug: shortUrls } )  
+  
+})
 
-const notFoundPath = path.join(__dirname, 'public/404.html');
+
+
+const notFoundPath = path.join(__dirname, '/src/public/404.html');
+
 
 app.get('/:id', async (req, res, next) => {
   const { id: slug } = req.params;
   try {
-    const url = await urls.findOne({ slug });
-    if (url) {
-      return res.redirect(url.url);
+    const slugUrl = await urls.findOne({ slug });
+    console.log(slug);
+    if (slugUrl) {
+
+      slugUrl.clicks++;
+      return res.redirect(slugUrl.url);
     }
     return res.status(404).sendFile(notFoundPath);
   } catch (error) {
     return res.status(404).sendFile(notFoundPath);
+
+    
   }
 });
 
@@ -42,13 +74,14 @@ const schema = yup.object().shape({
   url: yup.string().trim().url().required(),
 });
 
+
 app.post('/url', slowDown({
   windowMs: 30 * 1000,
   delayAfter: 1,
   delayMs: 500,
 }), rateLimit({
   windowMs: 30 * 1000,
-  max: 1,
+  max: 100,
 }), async (req, res, next) => {
   let { slug, url } = req.body;
   try {
@@ -56,7 +89,8 @@ app.post('/url', slowDown({
       slug,
       url,
     });
-    if (url.includes('cdg.sh')) {
+    //cambiar localhost por el dominio personalizado
+    if (url.includes('spmcode.herokuapp.com')) {
       throw new Error('Stop it. 🛑');
     }
     if (!slug) {
@@ -78,6 +112,13 @@ app.post('/url', slowDown({
     next(error);
   }
 });
+
+app.get('/delete/:id', async (req, res) => {
+  const { id } = req.params
+
+  await urls.remove(id)
+  res.redirect('/')
+})
 
 app.use((req, res, next) => {
   res.status(404).sendFile(notFoundPath);
